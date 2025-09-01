@@ -19,6 +19,12 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
+## 📝 Changelog v2.7.0
+- Immersive Slideshow Mode: When you start the slideshow, the application now enters a clean, borderless fullscreen mode, hiding the toolbar and status bar for an uninterrupted viewing experience. The slideshow automatically returns to the normal window view when it completes its loop or when you press the Esc key.
+- Expanded Format Support: The viewer now supports a wider range of files. In addition to standard images, I've added support for common video formats like MP4, AVI, and MKV.
+- Automatic Video Playback: While navigating through a folder using the "Next" and "Previous" buttons, if the application encounters a video file, it will automatically switch to the video player and begin playback.
+
+---
 ## 📸 Screenshot
 <img width="1102" height="654" alt="Screenshot 2025-08-31 233037" src="https://github.com/user-attachments/assets/c35b4c17-d908-4a79-94b2-9398c5a0101a" />
 
