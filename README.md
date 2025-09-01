@@ -31,9 +31,6 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 <img width="1103" height="654" alt="Screenshot 2025-08-31 232949" src="https://github.com/user-attachments/assets/47ae6a96-61af-4b1e-bd37-1a1bd1f22a42" />
 
 <img width="1102" height="654" alt="Screenshot 2025-08-31 233125" src="https://github.com/user-attachments/assets/fff50170-db5a-4b1c-b6ab-6ba509bb2dba" />
-
-<img width="1101" height="648" alt="Screenshot 2025-08-31 232929" src="https://github.com/user-attachments/assets/cd11ead1-2244-4b11-a9c2-88d7702f785f" />
-
 ---
 
 ## ℹ️ Information Before Installation
