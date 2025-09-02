@@ -19,10 +19,11 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## 📝 Changelog v3.5.0
+## 📝 Changelog v4.0.0
 - Add More Photo Effect
 - Add Photo Collage Maker
 - Add Search by Image
+- Add Support Preset Adobe Lightroom
 
 ---
 ## 📸 Screenshot
