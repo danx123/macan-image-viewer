@@ -19,7 +19,8 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-
+## Changelog v4.7.0
+- Add Quick View Mode
 ---
 ## 📸 Screenshot
 <img width="1080" height="2202" alt="macan_image_viewer_v4 5 0" src="https://github.com/user-attachments/assets/ed8bc604-bd20-4012-b07f-7093e4a994ac" />
