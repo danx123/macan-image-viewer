@@ -19,8 +19,6 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## 📝 Changelog v4.6.0
-- Rewrite Engine
 
 ---
 ## 📸 Screenshot
