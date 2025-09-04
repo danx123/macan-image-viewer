@@ -19,21 +19,16 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## 📝 Changelog v4.0.0
-- Add More Photo Effect
-- Add Photo Collage Maker
-- Add Search by Image
-- Add Support Preset Adobe Lightroom
+## 📝 Changelog v4.5.0
+- Added Database Manager to manage image_index.db
+- Added Effects Manager to the context menu
+- Support for .dng files
+- Added Saturation Slider (RGB)
 
 ---
 ## 📸 Screenshot
-<img width="1102" height="654" alt="Screenshot 2025-08-31 233037" src="https://github.com/user-attachments/assets/c35b4c17-d908-4a79-94b2-9398c5a0101a" />
+<img width="1080" height="2202" alt="macan_image_viewer_v4 5 0" src="https://github.com/user-attachments/assets/ed8bc604-bd20-4012-b07f-7093e4a994ac" />
 
-<img width="1102" height="654" alt="Screenshot 2025-08-31 233125" src="https://github.com/user-attachments/assets/fff50170-db5a-4b1c-b6ab-6ba509bb2dba" />
-
-<img width="1052" height="687" alt="Screenshot 2025-09-01 210150" src="https://github.com/user-attachments/assets/8aff4556-a930-42df-8fdc-e4f2076664c4" />
-
-<img width="1055" height="688" alt="Screenshot 2025-09-01 210212" src="https://github.com/user-attachments/assets/410fbdc4-9b84-4db6-b37b-dab3066d0816" />
 
 
 ---
