@@ -19,21 +19,11 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.0.0
+## Changelog v5.1.0
 
-Changelog Macan Quick View:
+Rebuild with Nuitka for better performance
 
-- Fit to Screen Button: A new "Fit to Screen" button with a unique icon has been added to the toolbar, allowing you to instantly resize the image to fit the window.
-- Fullscreen Icon: The icon for the fullscreen button has been updated to be distinct from the new "Fit to Screen" icon.
-- Restore Icon Fix: The maximize button's icon will now correctly change to a "restore" icon when the window is maximized and switch back when the size is restored.
 
-Changelog Macan Image Viewer:
-
-ManagePresetsDialog has been completely redesigned. It now features:
-A live image preview on the right side.
-A list of presets on the left. When you click a preset, the preview updates instantly.
-A "Strength" slider to control the intensity of the selected preset, blending it with the original image.
-The dialog now functions as an "apply" tool. Clicking OK will apply the currently previewed effect to the image in the main viewer.
 ---
 ## 📸 Screenshot
 <img width="1080" height="2202" alt="macan_image_viewer_v4 5 0" src="https://github.com/user-attachments/assets/ed8bc604-bd20-4012-b07f-7093e4a994ac" />
