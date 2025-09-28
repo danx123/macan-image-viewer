@@ -19,14 +19,16 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.1.0
-
-Rebuild with Nuitka for better performance
+## Changelog v5.2.0
+- Fix minor bug when playing video
+- Add Status bar info, size ann resolution
+- Rebuild with Nuitka for better performance
 
 
 ---
 ## 📸 Screenshot
-<img width="1080" height="2202" alt="macan_image_viewer_v4 5 0" src="https://github.com/user-attachments/assets/ed8bc604-bd20-4012-b07f-7093e4a994ac" />
+<img width="1365" height="689" alt="image" src="https://github.com/user-attachments/assets/0f9db56a-d1cf-409a-a2da-3c775d374d45" />
+
 
 
 
