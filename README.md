@@ -21,7 +21,7 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 ---
 ## Changelog v5.2.0
 - Fix minor bug when playing video
-- Add Status bar info, size ann resolution
+- Add Status bar info, size and resolution
 - Rebuild with Nuitka for better performance
 
 
