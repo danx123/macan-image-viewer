@@ -19,9 +19,8 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.2.0
-- Fix minor bug when playing video
-- Add Status bar info, size and resolution
+## Changelog v5.2.1
+- Update Framework
 - Rebuild with Nuitka for better performance
 
 
