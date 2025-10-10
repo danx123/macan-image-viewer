@@ -1,6 +1,6 @@
 ## 🐅 Macan Image Viewer
 Modern, Powerful, and Shrine-Inspired Image Viewer
-Macan Image Viewer is a PyQt6 and OpenCV-based desktop application for viewing, managing, and processing images.
+Macan Image Viewer is a PySide6 and OpenCV-based desktop application for viewing, managing, and processing images.
 
 Designed with a modern UI, comprehensive feature support, and lightweight performance for everyday and professional use.
 
@@ -34,7 +34,7 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 ---
 
 ## ℹ️ Information Before Installation
-The application uses PyQt6, Pillow, and OpenCV. Ensure Python version is 3.8 or higher.
+The application uses PySide6, Pillow, and OpenCV. Ensure Python version is 3.8 or higher.
 The Set as Wallpaper feature is only available on Windows.
 The Print and Save as PDF features require Qt Print Support.
 The Batch and Converter features may consume higher CPU resources when processing multiple files.
