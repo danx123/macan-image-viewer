@@ -19,9 +19,10 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.2.2
-- Update Framework
-- Rebuild with Nuitka for better performance
+## Changelog v5.3.0
+- Change path thumbnails cache to (Users/AppData/local/MacanImageViewer)
+- Update Dependency
+- Update Library
 
 
 ---
