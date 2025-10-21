@@ -19,10 +19,9 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.3.0
-- Change path thumbnails cache to (Users/AppData/local/MacanImageViewer)
-- Update Dependency
-- Update Library
+## Changelog v5.5.0
+- Macan Quick View changelog: - Added set as wallpaper (toolbar & context menu)
+- Macan Image Finder (Search by Image) changelog: Retranslate string
 
 
 ---
