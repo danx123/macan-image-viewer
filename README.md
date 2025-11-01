@@ -19,9 +19,9 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.5.3
-- Fixed some icons & strings
-- Improve Performance
+## Changelog v5.5.5
+- Fixed Photo Collage
+- Fixed Image Convert
 
 
 ---
