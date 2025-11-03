@@ -19,11 +19,8 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v5.5.5
-- Fixed Photo Collage
-- Fixed Image Convert
-
-
+## Changelog v5.5.6
+- Added new function to Macan Quick View, namely the format register function (association file) .jpg, .jpeg, .bmp, .png, .webp
 ---
 ## 📸 Screenshot
 <img width="1365" height="689" alt="image" src="https://github.com/user-attachments/assets/0f9db56a-d1cf-409a-a2da-3c775d374d45" />
