@@ -1,0 +1,796 @@
+# macan_viewer_v8_final.py
+
+import sys
+import os
+import cv2
+import platform
+import subprocess
+from glob import glob
+# --- PERUBAHAN BARU: Import ctypes untuk wallpaper di Windows ---
+if platform.system() == "Windows":
+    import ctypes
+# --- AKHIR PERUBAHAN BARU ---
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QLabel, QScrollArea,
+    QVBoxLayout, QFileDialog, QMenu, QStatusBar, QToolBar,
+    QSizePolicy, QPushButton, QRubberBand, QMessageBox, QToolButton
+)
+from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QKeySequence, QPainter, QCursor
+from PyQt6.QtCore import Qt, QSize, QPoint, QRect, QByteArray
+from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
+
+class ImageViewer(QMainWindow):
+    """
+    Aplikasi Image Viewer dengan PyQt6 dan OpenCV.
+    Fitur: Buka, Simpan, Zoom, Rotasi, Flip, Navigasi, Frameless, Drag, Crop.
+    Perubahan: Set as Wallpaper, Fullscreen (F11), Peningkatan UX Crop (kursor & cancel),
+    Fix "Open in Explorer", update teks "About".
+    """
+    def __init__(self):
+        super().__init__()
+
+        self.image_path = None
+        self.current_folder_images = []
+        self.current_image_index = -1
+        self.cv_image = None
+        self.display_image = None
+        self.zoom_factor = 1.0
+        self.fit_to_window = True
+        
+        self.undo_stack = []
+        self.redo_stack = []
+        
+        self.old_pos = None
+        self.is_resizing = False
+        self.resize_edge = None
+        self.resize_margin = 8
+
+        self.rubber_band = None
+        self.origin_point = None
+        self.is_cropping = False
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Macan Image Viewer')
+        self.setGeometry(100, 100, 1024, 650)
+        self.center_window()
+
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setMouseTracking(True)
+        
+        # ... (Kode UI lainnya tidak berubah)
+
+        self.setStyleSheet("""
+            QMainWindow { background-color: #2b2b2b; }
+            QToolBar {
+                background-color: #202020;
+                border: none;
+                padding: 5px;
+            }
+            QToolBar QToolButton {
+                background-color: transparent;
+                color: #f0f0f0; /* Warna teks untuk tombol menu */
+                border: none;
+                padding: 5px;
+                margin: 0 2px;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #3c3c3c;
+                border-radius: 3px;
+            }
+            QToolBar QToolButton#close_button:hover { background-color: #e81123; }
+            QMenu {
+                background-color: #2b2b2b;
+                color: #f0f0f0;
+                border: 1px solid #555;
+            }
+            QMenu::item:selected { background-color: #3c3c3c; }
+            QStatusBar {
+                background-color: #202020;
+                color: #f0f0f0;
+                border-top: 1px solid #555;
+            }
+            QStatusBar::item { border: none; }
+            QLabel, QStatusBar QLabel { color: #f0f0f0; }
+            QPushButton {
+                background-color: #555555;
+                color: #f0f0f0;
+                border: 1px solid #666;
+                padding: 5px 10px;
+                border-radius: 3px;
+            }
+            QPushButton:hover { background-color: #666666; }
+        """)
+
+        self.image_label = QLabel(self)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.image_label.setScaledContents(True)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setMouseTracking(True)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.image_label)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
+        self.scroll_area.setMouseTracking(True)
+
+        self.crop_button = QPushButton("Crop Selection", self)
+        self.crop_button.hide()
+        self.crop_button.clicked.connect(self.perform_crop)
+
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self.scroll_area)
+        main_widget.setMouseTracking(True)
+        self.setCentralWidget(main_widget)
+
+        self._create_actions()
+        self._create_tool_bar()
+        self._create_status_bar()
+
+        self.rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self.image_label)
+        self.rubber_band.setStyleSheet("QRubberBand { border: 1px dashed white; background-color: rgba(255, 255, 255, 50); }")
+
+        self.image_label.mousePressEvent = self.image_mouse_press
+        self.image_label.mouseMoveEvent = self.image_mouse_move
+        self.image_label.mouseReleaseEvent = self.image_mouse_release
+
+    def center_window(self):
+        screen = QApplication.primaryScreen().geometry()
+        window_size = self.geometry()
+        x = (screen.width() - window_size.width()) // 2
+        y = (screen.height() - window_size.height()) // 2
+        self.move(x, y)
+
+    def _create_svg_icon(self, svg_xml):
+        renderer = QSvgRenderer(QByteArray(svg_xml.encode('utf-8')))
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _create_actions(self):
+        # Aksi Menu File
+        self.print_action = QAction("Print...", self)
+        self.print_action.triggered.connect(self.print_image)
+        
+        self.save_pdf_action = QAction("Save as PDF...", self)
+        self.save_pdf_action.triggered.connect(self.save_as_pdf)
+        
+        # --- PERUBAHAN BARU: Aksi untuk Set as Wallpaper ---
+        self.set_wallpaper_action = QAction("Set as Wallpaper", self)
+        self.set_wallpaper_action.triggered.connect(self.set_as_wallpaper)
+        # --- AKHIR PERUBAHAN BARU ---
+        
+        self.about_action = QAction("About", self)
+        self.about_action.triggered.connect(self.show_about_dialog)
+        
+        self.exit_action = QAction("Exit", self)
+        self.exit_action.triggered.connect(self.close)
+        
+        # Aksi Utama
+        self.open_action = QAction("&Buka Gambar...", self)
+        self.open_action.triggered.connect(self.open_image)
+        self.open_action.setShortcut(QKeySequence.StandardKey.Open)
+        
+        self.save_as_action = QAction("Save &As...", self)
+        self.save_as_action.triggered.connect(self.save_image_as)
+        self.save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
+
+        self.copy_action = QAction("&Copy", self)
+        self.copy_action.triggered.connect(self.copy_image_to_clipboard)
+        self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        
+        self.open_explorer_action = QAction("Open in &File Explorer", self)
+        self.open_explorer_action.triggered.connect(self.open_in_file_explorer)
+
+        self.zoom_in_action = QAction("Zoom &In", self)
+        self.zoom_in_action.triggered.connect(self.zoom_in)
+        self.zoom_in_action.setShortcut(QKeySequence.StandardKey.ZoomIn)
+        
+        self.zoom_out_action = QAction("Zoom &Out", self)
+        self.zoom_out_action.triggered.connect(self.zoom_out)
+        self.zoom_out_action.setShortcut(QKeySequence.StandardKey.ZoomOut)
+
+        self.reset_zoom_action = QAction("Fit to Window", self)
+        self.reset_zoom_action.triggered.connect(self.reset_zoom)
+        self.reset_zoom_action.setShortcut(QKeySequence(Qt.KeyboardModifier.ControlModifier | Qt.Key.Key_0))
+
+        self.rotate_left_action = QAction("Rotate &Left", self)
+        self.rotate_left_action.triggered.connect(self.rotate_left)
+        
+        self.rotate_right_action = QAction("Rotate &Right", self)
+        self.rotate_right_action.triggered.connect(self.rotate_right)
+
+        self.flip_horizontal_action = QAction("Flip Horizontal", self)
+        self.flip_horizontal_action.triggered.connect(lambda: self.flip_image(1))
+
+        self.flip_vertical_action = QAction("Flip Vertical", self)
+        self.flip_vertical_action.triggered.connect(lambda: self.flip_image(0))
+
+        self.prev_action = QAction("Pre&vious Image", self)
+        self.prev_action.triggered.connect(self.show_previous_image)
+        self.prev_action.setShortcut(QKeySequence.StandardKey.Back)
+
+        self.next_action = QAction("&Next Image", self)
+        self.next_action.triggered.connect(self.show_next_image)
+        self.next_action.setShortcut(QKeySequence.StandardKey.Forward)
+
+        self.undo_action = QAction("Undo", self)
+        self.undo_action.triggered.connect(self.undo_image)
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+
+        self.redo_action = QAction("Redo", self)
+        self.redo_action.triggered.connect(self.redo_image)
+        self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+
+        # --- PERUBAHAN BARU: Aksi untuk Fullscreen ---
+        self.fullscreen_action = QAction("Fullscreen", self)
+        self.fullscreen_action.setShortcut(QKeySequence(Qt.Key.Key_F11))
+        self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
+        # --- AKHIR PERUBAHAN BARU ---
+
+        self._update_action_states(False)
+
+    def _create_tool_bar(self):
+        self.tool_bar = QToolBar("Main Toolbar")
+        self.tool_bar.setIconSize(QSize(24, 24))
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.tool_bar)
+
+        icon_color = "#f0f0f0"
+        # Definisi SVG Icons
+        prev_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>'
+        next_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>'
+        open_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 12H5V8h14v10z"/></svg>'
+        save_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>'
+        copy_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>'
+        zoom_in_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM10 9h-1v1H8V9H7V8h1V7h1v1h1v1z"/></svg>'
+        zoom_out_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM7 9h5v-1H7z"/></svg>'
+        fit_window_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>'
+        rotate_left_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M7.83 11H18v2H7.83l2.88 2.88-1.41 1.41L5 12l4.29-4.29 1.41 1.41L7.83 11zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>'
+        rotate_right_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13.17L8.12 10.71 6.71 9.29 12 4l5.29 5.29-1.41 1.41L13 7.83V13h-2V7.83z" transform="rotate(90 12 12)"/></svg>'
+        flip_h_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M15 21h2v-2h-2v2zm4-12h2V7h-2v2zM3 5v14c0 1.1.9 2 2 2h4v-2H5V5h4V3H5c-1.1 0-2 .9-2 2zm16-2v2h2c0-1.1-.9-2-2-2zm-8 20h2V1h-2v22zm8-6h2v-2h-2v2zm-4 0h2v-2h-2v2zm4-4h2v-2h-2v2zm-12 4h2v-2H7v2z"/></svg>'
+        flip_v_svg = f'<svg viewBox="0 0 24 24" transform="rotate(90 12 12)"><path fill="{icon_color}" d="M15 21h2v-2h-2v2zm4-12h2V7h-2v2zM3 5v14c0 1.1.9 2 2 2h4v-2H5V5h4V3H5c-1.1 0-2 .9-2 2zm16-2v2h2c0-1.1-.9-2-2-2zm-8 20h2V1h-2v22zm8-6h2v-2h-2v2zm-4 0h2v-2h-2v2zm4-4h2v-2h-2v2zm-12 4h2v-2H7v2z"/></svg>'
+        explorer_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>'
+        undo_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>'
+        redo_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.91 16c1.05-3.19 4.05-5.5 7.59-5.5 1.96 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg>'
+        wallpaper_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M4 4h7V2H4c-1.1 0-2 .9-2 2v7h2V4zm6 9l-4 5h12l-3-4-2.03 2.71L10 13zm7-4.5c0-.83-.67-1.5-1.5-1.5S14 7.67 14 8.5s.67 1.5 1.5 1.5S17 9.33 17 8.5zM20 2h-7v2h7v7h2V4c0-1.1-.9-2-2-2zm0 18h-7v2h7c1.1 0 2-.9 2-2v-7h-2v7zM4 13H2v7c0 1.1.9 2 2 2h7v-2H4v-7z"/></svg>'
+        self.fullscreen_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>'
+        self.exit_fullscreen_svg = f'<svg viewBox="0 0 24 24"><path fill="{icon_color}" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>'
+
+        # Set Icons
+        self.open_action.setIcon(self._create_svg_icon(open_svg))
+        self.save_as_action.setIcon(self._create_svg_icon(save_svg))
+        self.copy_action.setIcon(self._create_svg_icon(copy_svg))
+        self.zoom_in_action.setIcon(self._create_svg_icon(zoom_in_svg))
+        self.zoom_out_action.setIcon(self._create_svg_icon(zoom_out_svg))
+        self.reset_zoom_action.setIcon(self._create_svg_icon(fit_window_svg))
+        self.rotate_left_action.setIcon(self._create_svg_icon(rotate_left_svg))
+        self.rotate_right_action.setIcon(self._create_svg_icon(rotate_right_svg))
+        self.flip_horizontal_action.setIcon(self._create_svg_icon(flip_h_svg))
+        self.flip_vertical_action.setIcon(self._create_svg_icon(flip_v_svg))
+        self.open_explorer_action.setIcon(self._create_svg_icon(explorer_svg))
+        self.prev_action.setIcon(self._create_svg_icon(prev_svg))
+        self.next_action.setIcon(self._create_svg_icon(next_svg))
+        self.undo_action.setIcon(self._create_svg_icon(undo_svg))
+        self.redo_action.setIcon(self._create_svg_icon(redo_svg))
+        self.set_wallpaper_action.setIcon(self._create_svg_icon(wallpaper_svg))
+        self.fullscreen_action.setIcon(self._create_svg_icon(self.fullscreen_svg))
+        
+        # Build File Menu
+        file_menu_button = QToolButton(self)
+        file_menu_button.setText("File")
+        file_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        file_menu = QMenu(self)
+        file_menu.addAction(self.print_action)
+        file_menu.addAction(self.save_pdf_action)
+        file_menu.addAction(self.set_wallpaper_action) # Ditambahkan
+        file_menu.addSeparator()
+        file_menu.addAction(self.about_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.exit_action)
+        file_menu_button.setMenu(file_menu)
+        
+        # Build Toolbar Layout
+        self.tool_bar.addWidget(file_menu_button)
+        self.tool_bar.addAction(self.prev_action)
+        self.tool_bar.addAction(self.next_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.open_action)
+        self.tool_bar.addAction(self.save_as_action)
+        self.tool_bar.addAction(self.copy_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.zoom_in_action)
+        self.tool_bar.addAction(self.zoom_out_action)
+        self.tool_bar.addAction(self.reset_zoom_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.rotate_left_action)
+        self.tool_bar.addAction(self.rotate_right_action)
+        self.tool_bar.addAction(self.flip_horizontal_action)
+        self.tool_bar.addAction(self.flip_vertical_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.undo_action)
+        self.tool_bar.addAction(self.redo_action)
+        self.tool_bar.addSeparator()
+        self.tool_bar.addAction(self.open_explorer_action)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.tool_bar.addWidget(spacer)
+        
+        # Window Control Buttons
+        self.tool_bar.addAction(self.fullscreen_action) # Ditambahkan
+        
+        minimize_svg = f'<svg viewBox="0 0 24 24"><path fill="none" stroke="{icon_color}" stroke-width="2" d="M4 12 L20 12"></path></svg>'
+        maximize_svg = f'<svg viewBox="0 0 24 24"><path fill="none" stroke="{icon_color}" stroke-width="2" d="M4 4 L20 4 L20 20 L4 20 Z"></path></svg>'
+        self.restore_svg = f'<svg viewBox="0 0 24 24"><path fill="none" stroke="{icon_color}" stroke-width="2" d="M9 9 L20 9 L20 20 L9 20 Z M4 4 L15 4 L15 15 L4 15 Z"></path></svg>'
+        close_svg = f'<svg viewBox="0 0 24 24"><path fill="none" stroke="{icon_color}" stroke-width="2" d="M6 6 L18 18 M18 6 L6 18"></path></svg>'
+
+        self.minimize_icon = self._create_svg_icon(minimize_svg)
+        self.maximize_icon = self._create_svg_icon(maximize_svg)
+        self.restore_icon = self._create_svg_icon(self.restore_svg)
+        self.close_icon = self._create_svg_icon(close_svg)
+
+        self.minimize_action = QAction(self.minimize_icon, "Minimize", self)
+        self.minimize_action.triggered.connect(self.showMinimized)
+        self.maximize_action = QAction(self.maximize_icon, "Maximize", self)
+        self.maximize_action.triggered.connect(self.toggle_maximize_restore)
+        self.close_action = QAction(self.close_icon, "Close", self)
+        self.close_action.setObjectName("close_button")
+        self.close_action.triggered.connect(self.close)
+
+        self.tool_bar.addAction(self.minimize_action)
+        self.tool_bar.addAction(self.maximize_action)
+        self.tool_bar.addAction(self.close_action)
+
+    def _create_status_bar(self):
+        self.statusbar = self.statusBar()
+        self.filename_label = QLabel()
+        self.statusbar.addWidget(self.filename_label, 1)
+        self.dimensions_label = QLabel("  ")
+        self.filesize_label = QLabel("  ")
+        self.zoom_label = QLabel(" 100% ")
+        self.statusbar.addPermanentWidget(self.dimensions_label)
+        self.statusbar.addPermanentWidget(self.filesize_label)
+        self.statusbar.addPermanentWidget(self.zoom_label)
+
+    def _update_action_states(self, enabled):
+        actions = [
+            self.save_as_action, self.copy_action, self.open_explorer_action,
+            self.zoom_in_action, self.zoom_out_action, self.reset_zoom_action,
+            self.rotate_left_action, self.rotate_right_action, self.flip_horizontal_action,
+            self.flip_vertical_action, self.print_action, self.save_pdf_action,
+            self.set_wallpaper_action, self.fullscreen_action
+        ]
+        for action in actions:
+            action.setEnabled(enabled)
+
+        self.prev_action.setEnabled(enabled and self.current_image_index > 0)
+        self.next_action.setEnabled(enabled and self.current_image_index < len(self.current_folder_images) - 1)
+        
+        self.undo_action.setEnabled(bool(self.undo_stack))
+        self.redo_action.setEnabled(bool(self.redo_stack))
+        
+    def open_image(self, file_path=None):
+        if not file_path:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Buka Gambar", "", "Image Files (*.png *.jpg *.jpeg *.bmp *.webp);;All Files (*)")
+        
+        if file_path:
+            self.image_path = file_path
+            self.cv_image = cv2.imread(self.image_path)
+            if self.cv_image is None:
+                self.statusbar.showMessage(f"Error: Gagal membuka file {os.path.basename(self.image_path)}", 5000)
+                return
+            self.display_image = self.cv_image.copy()
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self.fit_to_window = True 
+            self._display_image()
+            self._update_status_bar()
+            self.setWindowTitle(f'{os.path.basename(self.image_path)} - Macan Viewer')
+            self._load_current_folder_images()
+            self._update_action_states(True)
+
+    def open_in_file_explorer(self):
+        if not self.image_path: return
+        # --- PERUBAHAN BARU: Menggunakan os.path.normpath untuk path yang lebih aman ---
+        normalized_path = os.path.normpath(self.image_path)
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(f'explorer /select,"{normalized_path}"')
+            elif platform.system() == "Darwin":
+                subprocess.run(["open", "-R", normalized_path])
+            else:
+                # Fallback untuk Linux, membuka folder containing a file
+                folder = os.path.dirname(normalized_path)
+                subprocess.run(["xdg-open", folder])
+        except Exception as e:
+            self.statusbar.showMessage(f"Gagal membuka folder: {e}", 5000)
+    
+    def show_about_dialog(self):
+        # --- PERUBAHAN BARU: Memperbarui teks "About" ---
+        QMessageBox.about(self, "About Macan Image Viewer",
+                          "<b>Macan Image Viewer v8.0</b><br><br>"
+                          "Macan Viewer adalah aplikasi image viewer modern dan serbaguna yang dirancang "
+                          "untuk kecepatan dan efisiensi. Dibuat dengan Python, PyQt6, dan didukung oleh "
+                          "OpenCV, Macan Viewer memungkinkan Anda untuk melihat, mengedit, dan mengelola "
+                          "koleksi gambar Anda dengan mudah, cepat, dan bebas hambatan.")
+
+    # --- FUNGSI-FUNGSI BARU ---
+    def set_as_wallpaper(self):
+        if self.image_path is None:
+            self.statusbar.showMessage("Tidak ada gambar untuk dijadikan wallpaper.", 3000)
+            return
+        
+        path = os.path.abspath(self.image_path)
+        system = platform.system()
+        
+        try:
+            if system == "Windows":
+                SPI_SETDESKWALLPAPER = 20
+                ctypes.windll.user32.SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path, 3)
+                self.statusbar.showMessage("Wallpaper berhasil diatur.", 3000)
+            elif system == "Darwin": # macOS
+                script = f'osascript -e \'tell application "Finder" to set desktop picture to POSIX file "{path}"\''
+                subprocess.run(script, shell=True, check=True)
+                self.statusbar.showMessage("Wallpaper berhasil diatur.", 3000)
+            else: # Linux
+                desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+                if "gnome" in desktop_env or "cinnamon" in desktop_env:
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.background", "picture-uri", f"file://{path}"], check=True)
+                    self.statusbar.showMessage("Wallpaper berhasil diatur untuk GNOME/Cinnamon.", 3000)
+                else:
+                    self.statusbar.showMessage("Set wallpaper tidak didukung otomatis di desktop environment ini.", 5000)
+        except Exception as e:
+            self.statusbar.showMessage(f"Gagal mengatur wallpaper: {e}", 5000)
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self.fullscreen_action.setIcon(self._create_svg_icon(self.fullscreen_svg))
+        else:
+            self.showFullScreen()
+            self.fullscreen_action.setIcon(self._create_svg_icon(self.exit_fullscreen_svg))
+            
+    def cancel_crop(self):
+        self.is_cropping = False
+        self.rubber_band.hide()
+        self.crop_button.hide()
+        self.image_label.unsetCursor() # Reset kursor
+        self.statusbar.showMessage("Crop dibatalkan.", 2000)
+        
+    def keyPressEvent(self, event):
+        # --- PERUBAHAN BARU: Fungsi cancel crop dengan tombol Esc ---
+        if event.key() == Qt.Key.Key_Escape and self.is_cropping:
+            self.cancel_crop()
+        else:
+            super().keyPressEvent(event)
+    # --- AKHIR FUNGSI-FUNGSI BARU ---
+
+    # --- Peningkatan UX pada fungsi mouse untuk CROP ---
+    def image_mouse_press(self, event):
+        if self.display_image is None: return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.origin_point = event.position().toPoint()
+            self.rubber_band.setGeometry(QRect(self.origin_point, QSize()))
+            self.rubber_band.show()
+            self.is_cropping = True
+            self.crop_button.hide()
+            # --- PERUBAHAN BARU: Ganti kursor saat mulai cropping ---
+            self.image_label.setCursor(Qt.CursorShape.CrossCursor)
+    
+    def image_mouse_move(self, event):
+        if self.is_cropping:
+            self.rubber_band.setGeometry(QRect(self.origin_point, event.position().toPoint()).normalized())
+    
+    def image_mouse_release(self, event):
+        if self.is_cropping:
+            # --- PERUBAHAN BARU: Reset kursor setelah cropping selesai ---
+            self.image_label.unsetCursor()
+            # --- AKHIR PERUBAHAN BARU ---
+            
+            # Cek apakah cropping selesai atau dibatalkan (klik tanpa drag)
+            if self.origin_point == event.position().toPoint():
+                self.cancel_crop()
+                return
+
+            self.is_cropping = False
+            selection_rect = self.rubber_band.geometry()
+            # ... sisa logic tidak berubah
+            if not self.image_label.pixmap(): return
+            pixmap_rect = self.image_label.pixmap().rect()
+            
+            pixmap_display_x = (self.image_label.width() - pixmap_rect.width()) / 2
+            pixmap_display_y = (self.image_label.height() - pixmap_rect.height()) / 2
+
+            relative_x = selection_rect.x() - pixmap_display_x
+            relative_y = selection_rect.y() - pixmap_display_y
+            
+            scaled_selection = QRect(int(relative_x), int(relative_y), selection_rect.width(), selection_rect.height())
+            scaled_selection = scaled_selection.intersected(pixmap_rect)
+            
+            if scaled_selection.width() > 5 and scaled_selection.height() > 5:
+                img_h, img_w, _ = self.display_image.shape
+                scale_x = img_w / pixmap_rect.width() if pixmap_rect.width() > 0 else 0
+                scale_y = img_h / pixmap_rect.height() if pixmap_rect.height() > 0 else 0
+
+                self.crop_x = int(scaled_selection.x() * scale_x)
+                self.crop_y = int(scaled_selection.y() * scale_y)
+                self.crop_w = int(scaled_selection.width() * scale_x)
+                self.crop_h = int(scaled_selection.height() * scale_y)
+                
+                self.crop_button.show()
+                pos_x = self.scroll_area.pos().x() + selection_rect.center().x() - self.crop_button.width() // 2
+                pos_y = self.scroll_area.pos().y() + selection_rect.bottom() + 10
+                self.crop_button.move(pos_x, pos_y)
+                self.crop_button.raise_()
+            else:
+                self.rubber_band.hide()
+                self.crop_button.hide()
+
+    def perform_crop(self):
+        if self.display_image is None or self.rubber_band.isHidden(): return
+        self._push_to_undo_stack()
+        try:
+            self.crop_y = max(0, self.crop_y)
+            self.crop_x = max(0, self.crop_x)
+            
+            cropped_img = self.display_image[self.crop_y:self.crop_y + self.crop_h, self.crop_x:self.crop_x + self.crop_w]
+            self.display_image = cropped_img
+            self.fit_to_window = True
+            self._display_image()
+            self.statusbar.showMessage("Gambar berhasil di-crop.", 3000)
+        finally:
+            self.rubber_band.hide()
+            self.crop_button.hide()
+            
+    # --- Sisa kode tidak ada perubahan signifikan ---
+    def toggle_maximize_restore(self):
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize_action.setIcon(self.maximize_icon)
+        else:
+            self.showMaximized()
+            self.maximize_action.setIcon(self.restore_icon)
+    def _load_current_folder_images(self):
+        if self.image_path:
+            folder = os.path.dirname(self.image_path)
+            image_extensions = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.webp')
+            all_files = []
+            for ext in image_extensions:
+                all_files.extend(glob(os.path.join(folder, ext)))
+            self.current_folder_images = sorted(all_files, key=os.path.basename)
+            try:
+                self.current_image_index = self.current_folder_images.index(self.image_path)
+            except ValueError:
+                self.current_image_index = -1
+        else:
+            self.current_folder_images = []
+            self.current_image_index = -1
+        self._update_action_states(self.cv_image is not None)
+    def _display_image(self):
+        if self.display_image is None:
+            self.image_label.clear()
+            return
+        rgb_image = cv2.cvtColor(self.display_image, cv2.COLOR_BGR2RGB)
+        h_orig, w_orig, ch = rgb_image.shape
+        bytes_per_line = ch * w_orig
+        qt_image = QImage(rgb_image.data, w_orig, h_orig, bytes_per_line, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+        if self.fit_to_window:
+            scroll_area_size = self.scroll_area.size()
+            if w_orig > scroll_area_size.width() or h_orig > scroll_area_size.height():
+                scaled_pixmap = pixmap.scaled(scroll_area_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            else:
+                scaled_pixmap = pixmap
+            if w_orig > 0: self.zoom_factor = scaled_pixmap.width() / w_orig
+        else:
+            display_w = int(w_orig * self.zoom_factor)
+            display_h = int(h_orig * self.zoom_factor)
+            scaled_pixmap = pixmap.scaled(display_w, display_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self.image_label.setPixmap(scaled_pixmap)
+        self.image_label.resize(scaled_pixmap.size())
+        self._update_status_bar()
+    def _update_status_bar(self):
+        if self.cv_image is not None and self.image_path and os.path.exists(self.image_path):
+            h, w, _ = self.cv_image.shape
+            self.filename_label.setText(f" {os.path.basename(self.image_path)}")
+            self.dimensions_label.setText(f" {w} x {h} ")
+            size_bytes = os.path.getsize(self.image_path)
+            filesize_str = f"{size_bytes/1024:.1f} KB" if size_bytes < 1024**2 else f"{size_bytes/1024**2:.1f} MB"
+            self.filesize_label.setText(f" {filesize_str} ")
+            self.zoom_label.setText(f" {int(self.zoom_factor * 100)}% ")
+        else:
+            self.filename_label.setText("")
+            self.dimensions_label.setText(" ")
+            self.filesize_label.setText(" ")
+            self.zoom_label.setText(" ")
+    def _push_to_undo_stack(self):
+        if self.display_image is not None:
+            self.undo_stack.append(self.display_image.copy())
+            self.redo_stack.clear()
+            self._update_action_states(True)
+    def zoom_in(self):
+        if self.display_image is None: return
+        self.fit_to_window = False
+        self.zoom_factor = min(self.zoom_factor * 1.25, 8.0)
+        self._display_image()
+    def zoom_out(self):
+        if self.display_image is None: return
+        self.fit_to_window = False
+        self.zoom_factor = max(self.zoom_factor * 0.8, 0.1)
+        self._display_image()
+    def reset_zoom(self):
+        if self.display_image is None: return
+        self.fit_to_window = True
+        self._display_image()
+    def rotate_left(self):
+        if self.display_image is not None:
+            self._push_to_undo_stack()
+            self.display_image = cv2.rotate(self.display_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            self.fit_to_window = True
+            self._display_image()
+    def rotate_right(self):
+        if self.display_image is not None:
+            self._push_to_undo_stack()
+            self.display_image = cv2.rotate(self.display_image, cv2.ROTATE_90_CLOCKWISE)
+            self.fit_to_window = True
+            self._display_image()
+    def flip_image(self, flip_code):
+        if self.display_image is not None:
+            self._push_to_undo_stack()
+            self.display_image = cv2.flip(self.display_image, flip_code)
+            self._display_image()
+    def save_image_as(self):
+        if self.display_image is None: return
+        file_path, _ = QFileDialog.getSaveFileName(self, "Simpan Gambar Sebagai...", os.path.basename(self.image_path) if self.image_path else "","PNG (*.png);;JPG (*.jpg);;BMP (*.bmp)")
+        if file_path:
+            try:
+                cv2.imwrite(file_path, self.display_image)
+                self.statusbar.showMessage(f"Gambar berhasil disimpan di {file_path}", 3000)
+            except Exception as e:
+                self.statusbar.showMessage(f"Gagal menyimpan gambar: {e}", 5000)
+    def copy_image_to_clipboard(self):
+        if self.image_label.pixmap():
+            QApplication.clipboard().setPixmap(self.image_label.pixmap())
+            self.statusbar.showMessage("Gambar disalin ke clipboard", 3000)
+    def show_previous_image(self):
+        if self.current_image_index > 0:
+            self.current_image_index -= 1
+            self.open_image(self.current_folder_images[self.current_image_index])
+    def show_next_image(self):
+        if self.current_image_index < len(self.current_folder_images) - 1:
+            self.current_image_index += 1
+            self.open_image(self.current_folder_images[self.current_image_index])
+    def undo_image(self):
+        if self.undo_stack:
+            self.redo_stack.append(self.display_image.copy())
+            self.display_image = self.undo_stack.pop()
+            self._display_image()
+            self._update_action_states(True)
+    def redo_image(self):
+        if self.redo_stack:
+            self.undo_stack.append(self.display_image.copy())
+            self.display_image = self.redo_stack.pop()
+            self._display_image()
+            self._update_action_states(True)
+    def print_image(self):
+        if self.image_label.pixmap() is None: return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            painter = QPainter()
+            painter.begin(printer)
+            rect = painter.viewport()
+            pixmap = self.image_label.pixmap()
+            size = pixmap.size()
+            size.scale(rect.size(), Qt.AspectRatioMode.KeepAspectRatio)
+            painter.setViewport(rect.x(), rect.y(), size.width(), size.height())
+            painter.setWindow(pixmap.rect())
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+    def save_as_pdf(self):
+        if self.image_label.pixmap() is None: return
+        file_path, _ = QFileDialog.getSaveFileName(self, "Simpan sebagai PDF", "", "PDF Files (*.pdf)")
+        if file_path:
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(file_path)
+            painter = QPainter()
+            painter.begin(printer)
+            rect = painter.viewport()
+            pixmap = self.image_label.pixmap()
+            size = pixmap.size()
+            size.scale(rect.size(), Qt.AspectRatioMode.KeepAspectRatio)
+            painter.setViewport(rect.x(), rect.y(), size.width(), size.height())
+            painter.setWindow(pixmap.rect())
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            self.statusbar.showMessage(f"Berhasil disimpan sebagai PDF di {file_path}", 3000)
+    def get_edge(self, pos):
+        rect = self.rect()
+        margin = self.resize_margin
+        if pos.y() < margin:
+            if pos.x() < margin: return Qt.CursorShape.SizeFDiagCursor
+            if pos.x() > rect.right() - margin: return Qt.CursorShape.SizeBDiagCursor
+            return Qt.CursorShape.SizeVerCursor
+        if pos.y() > rect.bottom() - margin:
+            if pos.x() < margin: return Qt.CursorShape.SizeBDiagCursor
+            if pos.x() > rect.right() - margin: return Qt.CursorShape.SizeFDiagCursor
+            return Qt.CursorShape.SizeVerCursor
+        if pos.x() < margin: return Qt.CursorShape.SizeHorCursor
+        if pos.x() > rect.right() - margin: return Qt.CursorShape.SizeHorCursor
+        return None
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            self.resize_edge = self.get_edge(pos)
+            if self.resize_edge:
+                self.is_resizing = True
+                self.old_pos = event.globalPosition().toPoint()
+                event.accept()
+            elif pos.y() < self.tool_bar.height():
+                widget_at_pos = self.childAt(pos)
+                if isinstance(widget_at_pos, (QToolBar, QToolButton)):
+                    self.old_pos = event.globalPosition().toPoint()
+                    event.accept()
+        super().mousePressEvent(event)
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+        if self.is_resizing and self.old_pos:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.old_pos = event.globalPosition().toPoint()
+            geom = self.geometry()
+            if self.resize_edge in (Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeFDiagCursor, Qt.CursorShape.SizeBDiagCursor):
+                if pos.y() < self.resize_margin: geom.setTop(geom.top() + delta.y())
+                else: geom.setBottom(geom.bottom() + delta.y())
+            if self.resize_edge in (Qt.CursorShape.SizeHorCursor, Qt.CursorShape.SizeFDiagCursor, Qt.CursorShape.SizeBDiagCursor):
+                if pos.x() < self.resize_margin: geom.setLeft(geom.left() + delta.x())
+                else: geom.setRight(geom.right() + delta.x())
+            self.setGeometry(geom)
+            event.accept()
+        elif event.buttons() == Qt.MouseButton.LeftButton and self.old_pos:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.move(self.x() + delta.x(), self.y() + delta.y())
+            self.old_pos = event.globalPosition().toPoint()
+            event.accept()
+        else:
+            edge = self.get_edge(pos)
+            if edge: self.setCursor(QCursor(edge))
+            else: self.unsetCursor()
+        super().mouseMoveEvent(event)
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
+        self.is_resizing = False
+        self.resize_edge = None
+        self.unsetCursor()
+        super().mouseReleaseEvent(event)
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if event.position().y() < self.tool_bar.height():
+                self.toggle_maximize_restore()
+        super().mouseDoubleClickEvent(event)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.cv_image is not None and self.fit_to_window:
+             self._display_image()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    viewer = ImageViewer()
+
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        if os.path.isfile(file_path):
+            viewer.open_image(file_path)
+        else:
+            print(f"Error: File tidak ditemukan di '{file_path}'")
+
+    viewer.show()
+    sys.exit(app.exec())
