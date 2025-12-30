@@ -1,6 +1,7 @@
 {
-  "version": "6.3.0",
-  "release_date": "2025-12-07",
+  "version": "6.3.1",
+  "release_date": "2025-12-30",
   "download_url": "https://github.com/danx123/macan-image-viewer/releases",
-  "message": "Maintenance release with bug fixes."
+  "message": "Update Library."
+
 }
