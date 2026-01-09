@@ -19,7 +19,7 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v6.3.1
+## Changelog v6.3.2
 - Update Library
 ---
 ## 📸 Screenshot
