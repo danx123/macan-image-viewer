@@ -5,6 +5,9 @@ Macan Image Viewer is a PySide6 and OpenCV-based desktop application for viewing
 Designed with a modern UI, comprehensive feature support, and lightweight performance for everyday and professional use.
 
 ---
+<img width="1536" height="2419" alt="macan image viewer v8 1 0-crop" src="https://github.com/user-attachments/assets/b6d2df91-d946-4955-b7d0-ff2628386ed2" />
+
+---
 
 ## ✨ Key Features
 📂 Full Image Viewer: Open various image formats (PNG, JPG, WEBP, BMP, GIF, etc.)
@@ -19,12 +22,13 @@ Designed with a modern UI, comprehensive feature support, and lightweight perfor
 📝 Export PDF: Save images as PDFs
 
 ---
-## Changelog v7.3.2
-- Update Framework
----
 ## 📸 Screenshot
-<img width="804" height="688" alt="Screenshot 2025-11-14 070625" src="https://github.com/user-attachments/assets/9cddb118-e887-487a-b16d-6e8e91e03fdf" />
-<img width="1365" height="685" alt="Screenshot 2025-11-14 070721" src="https://github.com/user-attachments/assets/1ae059df-7350-41a6-b1f7-6415a12ed733" />
+
+<img width="829" height="656" alt="Screenshot 2026-06-23 221248" src="https://github.com/user-attachments/assets/703c1e7f-4d1a-4149-b1b3-162b20f2fc47" />
+
+<img width="1248" height="728" alt="Screenshot 2026-06-23 221504" src="https://github.com/user-attachments/assets/aa594ec0-b6ca-41cb-b07c-8b9739357f0c" />
+
+
 
 ---
 
