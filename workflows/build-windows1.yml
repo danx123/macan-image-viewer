@@ -1,0 +1,213 @@
+name: Build image_engine
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+env:
+  # Versi OpenCV yang dipakai — samain dengan opencv-480 yang tadinya
+  # ditulis sebagai feature (sekarang dikunci di sini, bukan lewat Cargo).
+  OPENCV_VERSION: "4.8.0"
+  OPENCV_INSTALL_DIR: ${{ github.workspace }}\opencv-install
+
+jobs:
+  build-windows:
+    name: Build wheel (Windows x64)
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+
+    steps:
+      - name: Checkout image_engine
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache pip (maturin, delvewheel) — kecil, tapi gratisan.
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-maturin-delvewheel
+
+      # Smarter cargo caching daripada actions/cache manual: key otomatis
+      # ikut rustc version + target triple + Cargo.lock, dan tau artifact
+      # mana yang gak perlu ke-cache (jadi ukuran cache lebih kecil, restore
+      # lebih cepat).
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Cache OpenCV build DULUAN, sebelum checkout source-nya — biar kalau
+      # cache-nya hit, gak perlu clone repo opencv/opencv (~500MB+) sama
+      # sekali lagi tiap run.
+      - name: Cache OpenCV build
+        id: cache-opencv
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OPENCV_INSTALL_DIR }}
+          key: ${{ runner.os }}-opencv-${{ env.OPENCV_VERSION }}-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Checkout OpenCV source
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: opencv/opencv
+          ref: ${{ env.OPENCV_VERSION }}
+          path: opencv-src
+
+      # OPENCV_BUILD di config.toml lama TIDAK dibaca opencv-rust — crate itu
+      # cuma discovery, gak pernah build OpenCV sendiri. Jadi OpenCV harus
+      # di-build manual di sini, pakai flag minimal yang sebelumnya ada di
+      # config.toml. Dipilih DYNAMIC + BUILD_opencv_world=ON (satu
+      # opencv_world480.dll/.lib) biar nanti gampang diarahin ke opencv-rust
+      # lewat OPENCV_LINK_LIBS tanpa perlu enumerasi manual lib pihak ketiga
+      # (zlib/libjpeg/libpng/libwebp/MSMF) satu-satu.
+      - name: Build OpenCV (minimal, world module)
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cmake -S opencv-src -B opencv-build -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="${{ env.OPENCV_INSTALL_DIR }}" `
+            -DBUILD_SHARED_LIBS=ON `
+            -DBUILD_WITH_STATIC_CRT=OFF `
+            -DBUILD_opencv_core=ON `
+            -DBUILD_opencv_imgcodecs=ON `
+            -DBUILD_opencv_imgproc=ON `
+            -DBUILD_opencv_photo=ON `
+            -DBUILD_opencv_videoio=ON `
+            -DBUILD_opencv_highgui=OFF `
+            -DBUILD_opencv_video=OFF `
+            -DBUILD_opencv_calib3d=OFF `
+            -DBUILD_opencv_features2d=OFF `
+            -DBUILD_opencv_flann=OFF `
+            -DBUILD_opencv_objdetect=OFF `
+            -DBUILD_opencv_stitching=OFF `
+            -DBUILD_opencv_ml=OFF `
+            -DBUILD_opencv_dnn=OFF `
+            -DBUILD_opencv_gapi=OFF `
+            -DBUILD_opencv_world=ON `
+            -DBUILD_EXAMPLES=OFF `
+            -DBUILD_TESTS=OFF `
+            -DBUILD_PERF_TESTS=OFF `
+            -DBUILD_DOCS=OFF `
+            -DBUILD_JAVA=OFF `
+            -DBUILD_opencv_python2=OFF `
+            -DBUILD_opencv_python3=OFF `
+            -DBUILD_opencv_js=OFF `
+            -DWITH_GUI=OFF `
+            -DWITH_QT=OFF `
+            -DWITH_GTK=OFF `
+            -DWITH_FFMPEG=OFF `
+            -DWITH_GSTREAMER=OFF `
+            -DWITH_DSHOW=OFF `
+            -DWITH_V4L=OFF `
+            -DWITH_OPENGL=OFF `
+            -DWITH_CUDA=OFF `
+            -DWITH_OPENCL=ON `
+            -DWITH_IPP=OFF `
+            -DWITH_LAPACK=OFF `
+            -DWITH_EIGEN=OFF `
+            -DWITH_MSMF=ON `
+            -DWITH_MSMF_DXVA=OFF `
+            -DWITH_JPEG=ON `
+            -DWITH_PNG=ON `
+            -DWITH_WEBP=ON `
+            -DBUILD_JPEG=ON `
+            -DBUILD_PNG=ON `
+            -DBUILD_WEBP=ON `
+            -DWITH_TIFF=OFF `
+            -DWITH_JASPER=OFF `
+            -DWITH_OPENEXR=OFF `
+            -DWITH_PFM=OFF `
+            -DWITH_GDCM=OFF
+
+          cmake --build opencv-build --config Release --target install -j 4
+
+      # OpenCV_DIR + cmake find_package probe TERNYATA rapuh di Windows
+      # (bug "CMAKE_SIZEOF_VOID_P is not defined" — opencv-rust manggil
+      # `cmake --find-package` tanpa context arsitektur lengkap). Solusi yang
+      # stabil: skip auto-discovery sepenuhnya, kasih tau lokasi include/lib
+      # secara manual lewat OPENCV_INCLUDE_PATHS/OPENCV_LINK_PATHS/
+      # OPENCV_LINK_LIBS (ini disebut probe "environment" di opencv-rust).
+      - name: Locate OpenCV world lib/dll
+        shell: pwsh
+        run: |
+          $libFile = Get-ChildItem -Path "${{ env.OPENCV_INSTALL_DIR }}" -Recurse -Filter "opencv_world*.lib" | Select-Object -First 1
+          $dllFile = Get-ChildItem -Path "${{ env.OPENCV_INSTALL_DIR }}" -Recurse -Filter "opencv_world*.dll" | Select-Object -First 1
+          $includeDir = Get-ChildItem -Path "${{ env.OPENCV_INSTALL_DIR }}" -Recurse -Directory -Filter "opencv2" | Select-Object -First 1
+
+          if (-not $libFile) { throw "opencv_world*.lib not found under ${{ env.OPENCV_INSTALL_DIR }}" }
+          if (-not $dllFile) { throw "opencv_world*.dll not found under ${{ env.OPENCV_INSTALL_DIR }}" }
+          if (-not $includeDir) { throw "opencv2 include dir not found under ${{ env.OPENCV_INSTALL_DIR }}" }
+
+          $libName = [System.IO.Path]::GetFileNameWithoutExtension($libFile.Name)
+
+          Write-Host "OPENCV_INCLUDE_PATHS -> $($includeDir.Parent.FullName)"
+          Write-Host "OPENCV_LINK_PATHS    -> $($libFile.DirectoryName)"
+          Write-Host "OPENCV_LINK_LIBS     -> $libName"
+          Write-Host "OPENCV_DLL_DIR       -> $($dllFile.DirectoryName)"
+
+          echo "OPENCV_INCLUDE_PATHS=$($includeDir.Parent.FullName)" >> $env:GITHUB_ENV
+          echo "OPENCV_LINK_PATHS=$($libFile.DirectoryName)" >> $env:GITHUB_ENV
+          echo "OPENCV_LINK_LIBS=$libName" >> $env:GITHUB_ENV
+          echo "OPENCV_DLL_DIR=$($dllFile.DirectoryName)" >> $env:GITHUB_ENV
+          # Paksa opencv-rust cuma pakai probe "environment", skip pkg_config/
+          # cmake/vcpkg yang kepancing duluan dan bikin build gagal walaupun
+          # env var manual udah bener.
+          echo "OPENCV_DISABLE_PROBES=pkg_config,cmake,vcpkg_cmake,vcpkg" >> $env:GITHUB_ENV
+
+      - name: Install maturin & delvewheel
+        run: pip install maturin delvewheel
+
+      # Gak perlu setup LLVM/libclang lagi — buildtime_bindgen sudah dihapus
+      # dari opencv-rust sejak 0.53.0, bindings udah pre-generated di crate.
+      - name: Build wheel (release, minimal build)
+        run: maturin build --release --interpreter python
+        env:
+          OPENCV_MSVC_CRT: dynamic
+
+      # opencv_world480.dll dynamic, jadi harus ditempelin ke dalam wheel
+      # biar .pyd nemu dia pas runtime di mesin user (yang gak install OpenCV
+      # sendiri). delvewheel itu setara auditwheel tapi buat Windows.
+      - name: Repair wheel (bundle opencv_world DLL)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-repaired | Out-Null
+          $wheel = Get-ChildItem target\wheels\*.whl | Select-Object -First 1
+          delvewheel repair $wheel.FullName --add-path "$env:OPENCV_DLL_DIR" --wheel-dir dist-repaired
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image_engine-windows-py${{ matrix.python-version }}
+          path: dist-repaired/*.whl
+          if-no-files-found: error
+
+  release:
+    name: Attach wheels to release
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_engine-windows-py3.13
+          path: dist
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl

@@ -1,0 +1,48 @@
+[package]
+name = "image_engine"
+version = "0.2.0"
+edition = "2021"
+description = "Rust-OpenCV minimal engine untuk Macan Image Viewer & Macan Efek"
+license = "MIT"
+
+[lib]
+name = "image_engine"
+crate-type = ["cdylib"]  # Bisa dipanggil langsung dari Python
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+
+# Jembatan numpy <-> opencv::Mat, dipakai supaya sisi Python (macan_efek.py)
+# tetap bisa kerja dengan np.ndarray seperti sebelumnya, tanpa cv2.
+numpy = "0.22"
+# CATATAN: sengaja TIDAK nambah `ndarray = "..."` sendiri di sini.
+# Crate `numpy` mendukung rentang ndarray yang semver-incompatible
+# (0.15–0.17), jadi kalau kita ikut declare ndarray sendiri, Cargo bisa
+# resolve dua instance ndarray beda versi major sekaligus — bikin tipe
+# Array3 kita gak "cocok" lagi sama trait IntoPyArray milik numpy (lihat
+# lib.rs, pakai `numpy::ndarray::Array3` bukan `ndarray::Array3` langsung).
+
+# CATATAN PENTING (opencv-rust >= 0.53.0):
+# - "core" BUKAN feature. Modul core selalu wajib ikut, gak bisa di-toggle,
+#   makanya nulis "core" bikin cargo error.
+# - "buildtime_bindgen" sudah DIHAPUS sejak 0.53.0. Bindings sekarang
+#   pre-generated & di-ship di dalam crate, gak perlu bindgen ulang saat build.
+# - "opencv-480" (version-selector feature) juga sudah DIHAPUS sejak 0.53.0.
+#   Versi OpenCV dideteksi otomatis saat build-time via header yang ditemukan,
+#   BUKAN lewat Cargo feature. Versi tetap dikunci lewat OpenCV yang di-build
+#   di CI (lihat build.yml), bukan lewat feature ini.
+opencv = {
+    version = "0.90.0",
+    default-features = false,  # KUNCI: matikan SEMUA fitur bawaan
+    features = [
+        "imgproc",     # cvtColor, resize, rotate, blur, filter2D, colormap,
+                        # Canny, adaptiveThreshold, equalizeHist, getGaussianKernel
+        "imgcodecs",    # Baca/tulis gambar: imread, imwrite
+        "photo",        # Efek lanjutan: detailEnhance, edgePreservingFilter
+        "videoio",      # VideoCapture (metadata video: fps, resolusi, fourcc, dll)
+        "features2d",   # ORB, BFMatcher, FlannBasedMatcher (Macan Image Finder)
+        "flann",        # dipakai features2d::FlannBasedMatcher (index/search params)
+        "calib3d",      # findHomography + RANSAC (Macan Image Finder)
+    ]
+}
+rayon = "1.10"  # Opsional: buat paralel kalau nanti butuh

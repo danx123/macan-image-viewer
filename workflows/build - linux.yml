@@ -1,0 +1,235 @@
+name: Build image_engine
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+env:
+  # Versi OpenCV yang dipakai — samain dengan opencv-480 yang tadinya
+  # ditulis sebagai feature (sekarang dikunci di sini, bukan lewat Cargo).
+  OPENCV_VERSION: "4.8.0"
+  OPENCV_INSTALL_DIR: ${{ github.workspace }}/opencv-install
+
+jobs:
+  build-linux:
+    name: Build wheel (Linux x64)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+
+    steps:
+      - name: Checkout image_engine
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # PENTING: ini beda dari Windows. Di Windows runner, libclang udah
+      # ke-bundle bareng Visual Studio jadi opencv-rust nemu dia otomatis.
+      # Di Ubuntu, `clang-sys` (dependency internal opencv-rust, dipakai buat
+      # deteksi environment/ABI biar bindings pre-generated yang dipilih
+      # cocok — BUKAN buat generate ulang bindings, jadi bukan
+      # "buildtime_bindgen" yang katanya udah dihapus) tetap butuh
+      # `libclang.so` beneran ada di sistem. Runner ubuntu-latest gak selalu
+      # punya `libclang-dev` ter-install, makanya build gagal di step maturin
+      # (bukan step build OpenCV) — makanya step ini HARUS unconditional,
+      # jalan tiap run, gak boleh digantung ke cache-opencv kayak step apt
+      # di bawah, karena tetep dibutuhin walau cache OpenCV lagi hit.
+      - name: Install libclang (buat opencv-rust punya clang-sys)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang
+
+      # Cache pip (maturin, auditwheel, patchelf) — kecil, tapi gratisan.
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-maturin-auditwheel
+
+      # Smarter cargo caching daripada actions/cache manual: key otomatis
+      # ikut rustc version + target triple + Cargo.lock, dan tau artifact
+      # mana yang gak perlu ke-cache (jadi ukuran cache lebih kecil, restore
+      # lebih cepat).
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Cache OpenCV build DULUAN, sebelum checkout source-nya — biar kalau
+      # cache-nya hit, gak perlu clone repo opencv/opencv (~500MB+) sama
+      # sekali lagi tiap run.
+      - name: Cache OpenCV build
+        id: cache-opencv
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OPENCV_INSTALL_DIR }}
+          key: ${{ runner.os }}-opencv-${{ env.OPENCV_VERSION }}-${{ hashFiles('.github/workflows/build.yml') }}
+
+      # Header FFmpeg cuma dibutuhin buat CONFIGURE OpenCV (WITH_FFMPEG=ON) —
+      # gak ada equivalent MSMF (Windows) di Linux, jadi videoio pakai FFmpeg
+      # buat baca metadata video (fps, resolusi, fourcc, dll).
+      - name: Install build deps (apt)
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev
+
+      - name: Checkout OpenCV source
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: opencv/opencv
+          ref: ${{ env.OPENCV_VERSION }}
+          path: opencv-src
+
+      # OPENCV_BUILD di config.toml lama TIDAK dibaca opencv-rust — crate itu
+      # cuma discovery, gak pernah build OpenCV sendiri. Jadi OpenCV harus
+      # di-build manual di sini. Dipilih DYNAMIC + BUILD_opencv_world=ON
+      # (satu libopencv_world.so) biar nanti gampang diarahin ke opencv-rust
+      # lewat OPENCV_LINK_LIBS tanpa perlu enumerasi manual lib pihak ketiga
+      # (zlib/libjpeg/libpng/libwebp/ffmpeg) satu-satu.
+      - name: Build OpenCV (minimal, world module)
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        run: |
+          cmake -S opencv-src -B opencv-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${OPENCV_INSTALL_DIR}" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_opencv_core=ON \
+            -DBUILD_opencv_imgcodecs=ON \
+            -DBUILD_opencv_imgproc=ON \
+            -DBUILD_opencv_photo=ON \
+            -DBUILD_opencv_videoio=ON \
+            -DBUILD_opencv_highgui=OFF \
+            -DBUILD_opencv_video=OFF \
+            -DBUILD_opencv_calib3d=OFF \
+            -DBUILD_opencv_features2d=OFF \
+            -DBUILD_opencv_flann=OFF \
+            -DBUILD_opencv_objdetect=OFF \
+            -DBUILD_opencv_stitching=OFF \
+            -DBUILD_opencv_ml=OFF \
+            -DBUILD_opencv_dnn=OFF \
+            -DBUILD_opencv_gapi=OFF \
+            -DBUILD_opencv_world=ON \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_PERF_TESTS=OFF \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_JAVA=OFF \
+            -DBUILD_opencv_python2=OFF \
+            -DBUILD_opencv_python3=OFF \
+            -DBUILD_opencv_js=OFF \
+            -DWITH_GUI=OFF \
+            -DWITH_QT=OFF \
+            -DWITH_GTK=OFF \
+            -DWITH_FFMPEG=ON \
+            -DWITH_GSTREAMER=OFF \
+            -DWITH_V4L=OFF \
+            -DWITH_OPENGL=OFF \
+            -DWITH_CUDA=OFF \
+            -DWITH_OPENCL=OFF \
+            -DWITH_IPP=OFF \
+            -DWITH_LAPACK=OFF \
+            -DWITH_EIGEN=OFF \
+            -DWITH_JPEG=ON \
+            -DWITH_PNG=ON \
+            -DWITH_WEBP=ON \
+            -DBUILD_JPEG=ON \
+            -DBUILD_PNG=ON \
+            -DBUILD_WEBP=ON \
+            -DWITH_TIFF=OFF \
+            -DWITH_JASPER=OFF \
+            -DWITH_OPENEXR=OFF \
+            -DWITH_PFM=OFF \
+            -DWITH_GDCM=OFF
+
+          cmake --build opencv-build --config Release --target install -j "$(nproc)"
+
+      # cmake --find-package probe kadang rapuh juga di Linux (tergantung
+      # OpenCVConfig.cmake ke-generate atau nggak). Solusi yang stabil: skip
+      # auto-discovery sepenuhnya, kasih tau lokasi include/lib secara
+      # manual lewat OPENCV_INCLUDE_PATHS/OPENCV_LINK_PATHS/OPENCV_LINK_LIBS
+      # (ini disebut probe "environment" di opencv-rust).
+      - name: Locate OpenCV world lib
+        run: |
+          libFile=$(find "${OPENCV_INSTALL_DIR}" -name "libopencv_world.so" | head -n1)
+          includeDir=$(find "${OPENCV_INSTALL_DIR}" -type d -name "opencv2" | head -n1)
+
+          if [ -z "$libFile" ]; then echo "libopencv_world.so not found under ${OPENCV_INSTALL_DIR}"; exit 1; fi
+          if [ -z "$includeDir" ]; then echo "opencv2 include dir not found under ${OPENCV_INSTALL_DIR}"; exit 1; fi
+
+          libDir=$(dirname "$libFile")
+          incParent=$(dirname "$includeDir")
+
+          echo "OPENCV_INCLUDE_PATHS -> $incParent"
+          echo "OPENCV_LINK_PATHS    -> $libDir"
+          echo "OPENCV_LINK_LIBS     -> opencv_world"
+
+          echo "OPENCV_INCLUDE_PATHS=$incParent" >> "$GITHUB_ENV"
+          echo "OPENCV_LINK_PATHS=$libDir" >> "$GITHUB_ENV"
+          echo "OPENCV_LINK_LIBS=opencv_world" >> "$GITHUB_ENV"
+          # Paksa opencv-rust cuma pakai probe "environment", skip pkg_config/
+          # cmake/vcpkg yang kepancing duluan dan bikin build gagal walaupun
+          # env var manual udah bener.
+          echo "OPENCV_DISABLE_PROBES=pkg_config,cmake,vcpkg_cmake,vcpkg" >> "$GITHUB_ENV"
+          # LD_LIBRARY_PATH dibutuhin pas auditwheel repair nanti buat nemuin
+          # libopencv_world.so yang mau di-bundle ke dalam wheel.
+          echo "LD_LIBRARY_PATH=$libDir:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Install maturin & auditwheel
+        run: pip install maturin auditwheel patchelf
+
+      # Gak perlu setup LLVM/libclang lagi — buildtime_bindgen sudah dihapus
+      # dari opencv-rust sejak 0.53.0, bindings udah pre-generated di crate.
+      - name: Build wheel (release, minimal build)
+        run: maturin build --release --interpreter python
+
+      # libopencv_world.so dynamic, jadi harus ditempelin ke dalam wheel biar
+      # .so ekstensi kita nemu dia pas runtime di mesin user (yang gak
+      # install OpenCV sendiri). auditwheel itu equivalent delvewheel buat
+      # Linux — otomatis bundle .so dependency + patch RPATH.
+      # CATATAN: `--plat auto` (BUKAN "linux_x86_64" — versi auditwheel baru
+      # udah gak nerima itu, cuma nerima tag manylinux_* yang valid atau
+      # "auto"). Dengan "auto", auditwheel sendiri yang deteksi tag
+      # manylinux paling ketat yang cocok sama symbol glibc yang beneran
+      # kepake pas link, gak perlu nebak versi manual.
+      - name: Repair wheel (bundle libopencv_world.so)
+        run: |
+          mkdir -p dist-repaired
+          wheel=$(ls target/wheels/*.whl | head -n1)
+          auditwheel repair "$wheel" --plat auto --wheel-dir dist-repaired
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image_engine-linux-py${{ matrix.python-version }}
+          path: dist-repaired/*.whl
+          if-no-files-found: error
+
+  release:
+    name: Attach wheels to release
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_engine-linux-py3.13
+          path: dist
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
