@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square)
 ![Rust](https://img.shields.io/badge/native%20engine-Rust-orange?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Total Downloads](https://img.shields.io/github/downloads/danx123/macan-image-viewer/total?style=flat-square&color=E8FF00&label=downloads)
+
 
 Modern, Powerful, and Shrine-Inspired Image Viewer
 Macan Image Viewer is a PySide6 and OpenCV-based desktop application for viewing, managing, and processing images.
